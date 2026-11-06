@@ -1,12 +1,8 @@
 {
-  "name": "worldview",
+  "name": "gni-ai",
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "build": "cd client && npm run build"
-  },
-  "devDependencies": {
-    "@vercel/node": "^30.0.0",
-    "vercel": "^39.0.0"
+    "build": "cd client && npm install && npm run build"
   }
 }
