@@ -1,0 +1,110 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #05080D;
+  --color-bg-secondary: #0A1019;
+  --color-accent: #40D9E8;
+  --color-accent-secondary: #438BFF;
+  --color-text: #EAF2FA;
+  --color-text-muted: #8293A6;
+  --color-border: rgba(120, 160, 190, 0.16);
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
+}
+
+@utility glass-panel {
+  background: rgba(10, 17, 27, 0.88);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(120, 160, 190, 0.16);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+@utility panel-separator {
+  border-top: 1px solid rgba(120, 160, 190, 0.16);
+  opacity: 0.5;
+}
+
+@utility accent-text {
+  color: #40D9E8;
+}
+
+@utility text-muted {
+  color: #8293A6;
+}
+
+@utility btn-glass {
+  @apply glass-panel px-3 py-1.5 text-sm rounded transition-colors;
+  color: #EAF2FA;
+}
+
+@utility btn-accent {
+  background: #40D9E8;
+  color: #021014;
+  font-weight: 600;
+  @apply px-3 py-1.5 rounded text-sm transition-all;
+  border: none;
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: #05080D;
+    color: #EAF2FA;
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    overflow: hidden;
+    width: 100vw;
+    height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  #root {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    isolation: isolate;
+  }
+
+  a {
+    color: #40D9E8;
+    text-decoration: none;
+  }
+
+  input,
+  textarea,
+  select,
+  button {
+    font-family: inherit;
+    font-size: inherit;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(120, 160, 190, 0.2);
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(120, 160, 190, 0.4);
+  }
+}
