@@ -1,4 +1,4 @@
-const { fetchGdeltNews, normalizeArticle, deduplicateArticles, clusterEvents, filterByCategory, filterByTime, corsHeaders } = require('../lib/news')
+const { fetchGdeltNews, normalizeArticle, deduplicateArticles, clusterEvents, filterByCategory, filterByTime, corsHeaders } = require('./lib/news')
 
 module.exports = async function handler(req, res) {
   if (req.method === 'OPTIONS') {

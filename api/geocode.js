@@ -1,4 +1,4 @@
-const { geocodeLocation, corsHeaders } = require('../lib/news')
+const { geocodeLocation, corsHeaders } = require('./lib/news')
 
 module.exports = async function handler(req, res) {
   if (req.method === 'OPTIONS') {
