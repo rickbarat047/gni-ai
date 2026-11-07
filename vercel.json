@@ -1,8 +1,13 @@
 {
-  "version": 2,
-  "outputDirectory": "client/dist",
-  "framework": "vite",
-  "routes": [
-    { "src": "/api/(.*)", "dest": "/api/$1" }
-  ]
+  "functions": {
+    "api/news.js": {
+      "runtime": "edge"
+    },
+    "api/news/search.js": {
+      "runtime": "edge"
+    },
+    "api/news/region.js": {
+      "runtime": "edge"
+    }
+  }
 }
