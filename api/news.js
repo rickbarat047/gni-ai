@@ -19,9 +19,12 @@ module.exports = async function handler(req, res) {
     const rawArticles = await fetchGdeltNews(q, timespan, maxRecords)
 
     const processed = []
+    let geoCount = 0
+    const MAX_GEO = 5
     for (const raw of rawArticles) {
-      const article = await normalizeArticle(raw, null)
+      const article = await normalizeArticle(raw, null, geoCount < MAX_GEO)
       if (article) processed.push(article)
+      if (article && article.latitude !== null) geoCount++
     }
 
     const deduped = deduplicateArticles(processed)

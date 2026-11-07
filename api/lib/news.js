@@ -290,13 +290,21 @@ function filterByTime(articles, timeRange) {
   return articles.filter((a) => new Date(a.publishedAt).getTime() >= cutoff)
 }
 
-async function normalizeArticle(raw, geo) {
+async function normalizeArticle(raw, geo, shouldGeocode) {
   if (!raw.title || !raw.url) return null
-  const geoResult = await geocodeLocation(
-    raw.locations && raw.locations.length > 0
-      ? `${raw.locations[0]}, ${raw.sourcecountry}`
-      : raw.title.split(/[-|—]/)[0].trim(),
-  )
+  shouldGeocode = shouldGeocode !== false
+  let geoResult = null
+  if (shouldGeocode) {
+    try {
+      geoResult = await geocodeLocation(
+        raw.locations && raw.locations.length > 0
+          ? `${raw.locations[0]}, ${raw.sourcecountry}`
+          : raw.title.split(/[-|—]/)[0].trim(),
+      )
+    } catch (e) {
+      // Geocoding failed, continue without coordinates
+    }
+  }
   const lat = geoResult?.latitude ?? null
   const lon = geoResult?.longitude ?? null
   return {
