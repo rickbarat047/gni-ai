@@ -13,7 +13,7 @@ module.exports = async function handler(req, res) {
     const east = parseFloat(req.query.east)
     const north = parseFloat(req.query.north)
     const timespan = req.query.timespan || '24h'
-    const maxRecords = parseInt(req.query.maxRecords || '200', 10)
+    const maxRecords = parseInt(req.query.maxRecords || '10', 10)
     const category = req.query.category
     const timeRange = req.query.timeRange
 
@@ -27,7 +27,7 @@ module.exports = async function handler(req, res) {
 
     const processed = []
     let geoCount = 0
-    const MAX_GEO = 5
+    const MAX_GEO = 2
     for (const raw of rawArticles) {
       const article = await normalizeArticle(raw, null, geoCount < MAX_GEO)
       if (article) processed.push(article)
