@@ -1,9 +1,4 @@
-import React, {
-  useEffect,
-  useRef,
-  useCallback,
-  useState,
-} from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import * as Cesium from 'cesium'
 import { useNewsStore } from '@/features/news/news.store'
 import {
@@ -12,7 +7,6 @@ import {
 } from '@/features/globe/globe.config'
 import {
   getDetailLevel,
-  getViewportBounds,
   getCameraPosition,
   getCameraHeight,
 } from '@/features/globe/camera.utils'
@@ -24,19 +18,65 @@ interface GlobeViewProps {
   className?: string
 }
 
+const REFRESH_INTERVAL_MS = 5 * 60 * 1000
+
+function applyFilters(
+  articles: NewsArticle[],
+  category: string | null,
+  timeRange: string | null,
+  searchQuery: string,
+): NewsArticle[] {
+  let list = articles
+
+  if (category && category !== 'all' && category !== 'breaking') {
+    list = list.filter((article) => article.category === category)
+  }
+
+  if (timeRange) {
+    const windows: Record<string, number> = {
+      '1h': 60 * 60 * 1000,
+      '6h': 6 * 60 * 60 * 1000,
+      '24h': 24 * 60 * 60 * 1000,
+      '7d': 7 * 24 * 60 * 60 * 1000,
+      '30d': 30 * 24 * 60 * 60 * 1000,
+    }
+    const windowMs = windows[timeRange]
+    if (windowMs) {
+      const cutoff = Date.now() - windowMs
+      list = list.filter(
+        (article) => new Date(article.publishedAt).getTime() >= cutoff,
+      )
+    }
+  }
+
+  const query = searchQuery.trim().toLowerCase()
+  if (query) {
+    const terms = query.split(/\s+/).filter((term) => term.length > 1)
+    list = list.filter((article) => {
+      const haystack = `${article.title} ${article.summary} ${article.city} ${article.country} ${article.source}`.toLowerCase()
+      return terms.every((term) => haystack.includes(term))
+    })
+  }
+
+  return list
+}
+
 const GlobeView: React.FC<GlobeViewProps> = ({ className }) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<Cesium.Viewer | null>(null)
-  let autoRotationFrame: number | null = null
-  let isUserInteracting = false
+  const interactionRef = useRef(false)
+  const rotationEnabledRef = useRef(GLOBE_CONFIG.AUTO_ROTATION.ENABLED)
 
   const {
     setArticles,
     setVisibleArticles,
     setScope,
     setSelectedArticle,
+    setLastUpdated,
+    setLoading,
     setError,
     clearError,
+    filters,
     scope,
     articles,
   } = useNewsStore()
@@ -47,13 +87,29 @@ const GlobeView: React.FC<GlobeViewProps> = ({ className }) => {
   const [imageryWarning, setImageryWarning] = useState<string | null>(null)
   const markersRef = useRef<Map<string, Cesium.Entity>>(new Map())
   const clustersRef = useRef<Map<string, Cesium.Entity>>(new Map())
-  let viewportDebounce: ReturnType<typeof setTimeout> | null = null
+  const clusterCentersRef = useRef<Map<string, { lat: number; lon: number }>>(new Map())
+  const articlesRef = useRef<NewsArticle[]>([])
+  const mountedRef = useRef(true)
+
+  const filteredArticles = useMemo(
+    () => applyFilters(articles, filters.category, filters.timeRange, filters.searchQuery),
+    [articles, filters.category, filters.timeRange, filters.searchQuery],
+  )
+
+  articlesRef.current = filteredArticles
+
+  /* ---------------------------------------------------------------- */
+  /* Initialise Cesium                                                 */
+  /* ---------------------------------------------------------------- */
 
   useEffect(() => {
+    mountedRef.current = true
     if (!containerRef.current) return
 
+    let viewer: Cesium.Viewer | null = null
+
     try {
-      const viewer = new Cesium.Viewer(containerRef.current, {
+      viewer = new Cesium.Viewer(containerRef.current, {
         timeline: false,
         animation: false,
         sceneModePicker: false,
@@ -68,32 +124,32 @@ const GlobeView: React.FC<GlobeViewProps> = ({ className }) => {
         shouldAnimate: true,
       })
 
-      // Add base imagery layer
+      viewerRef.current = viewer
+
+      const { longitude, latitude, height } = GLOBE_CONFIG.CAMERA.DEFAULT_POSITION
+      viewer.camera.setView({
+        destination: Cesium.Cartesian3.fromDegrees(longitude, latitude, height),
+      })
+
+      viewer.imageryLayers.removeAll()
       viewer.imageryLayers.addImageryProvider(
         new Cesium.UrlTemplateImageryProvider({
           url: GLOBE_CONFIG.IMAGERY_PROVIDERS.OPEN_STREET_MAP.url,
           credit: new Cesium.Credit(
             GLOBE_CONFIG.IMAGERY_PROVIDERS.OPEN_STREET_MAP.attribution,
           ),
+          maximumLevel: 18,
         }),
       )
 
-      viewerRef.current = viewer
-
-      // Set initial camera
-      const { longitude, latitude, height } =
-        GLOBE_CONFIG.CAMERA.DEFAULT_POSITION
-      viewer.camera.flyTo({
-        destination: Cesium.Cartesian3.fromDegrees(longitude, latitude, height),
-        duration: 2.0,
-      })
-
-      // Enable lighting and atmosphere
-      viewer.scene.globe.enableLighting = true
-      viewer.scene.globe.depthTestAgainstTerrain = true
+      viewer.scene.globe.enableLighting = false
+      viewer.scene.globe.depthTestAgainstTerrain = false
       viewer.scene.globe.showGroundAtmosphere = true
 
-      // Try Bing imagery if key available
+      if (viewer.scene.skyAtmosphere) {
+        viewer.scene.skyAtmosphere.show = true
+      }
+
       if (GLOBE_CONFIG.IMAGERY_PROVIDERS.BING.enabled) {
         try {
           viewer.imageryLayers.removeAll()
@@ -108,61 +164,111 @@ const GlobeView: React.FC<GlobeViewProps> = ({ className }) => {
         }
       }
 
-      // Terrain
-      Cesium.createWorldTerrainAsync().then((terrainProvider) => {
-        viewer.terrainProvider = terrainProvider
-      })
-
-      setIsReady(true)
-      clearError()
-    } catch (err) {
+      // Terrain is a nice-to-have. Never let it block the globe.
+      Cesium.createWorldTerrainAsync()
+        .then((terrainProvider) => {
+          const activeViewer = viewerRef.current
+          if (activeViewer && activeViewer === viewer) {
+            activeViewer.terrainProvider = terrainProvider
+          }
+        })
+        .catch(() => {})
+    } catch (error) {
       setError(
         `Failed to initialize 3D globe: ${
-          err instanceof Error ? err.message : String(err)
+          error instanceof Error ? error.message : String(error)
         }`,
       )
-      setIsReady(false)
     }
+
+    setIsReady(true)
+    clearError()
 
     return () => {
-      if (viewerRef.current) {
-        viewerRef.current.destroy()
-        viewerRef.current = null
+      mountedRef.current = false
+      if (viewer) {
+        viewer.destroy()
       }
-      if (autoRotationFrame) {
-        cancelAnimationFrame(autoRotationFrame)
-      }
-      if (viewportDebounce) clearTimeout(viewportDebounce)
+      viewerRef.current = null
     }
-  }, [])
+  }, [clearError, setError])
 
-  // Auto rotation - pause on interaction
+  /* ---------------------------------------------------------------- */
+  /* Load global news and refresh periodically                         */
+  /* ---------------------------------------------------------------- */
+
   useEffect(() => {
-    if (!viewerRef.current || !GLOBE_CONFIG.AUTO_ROTATION.ENABLED) return
+    let cancelled = false
+
+    const load = async () => {
+      try {
+        setLoading(true)
+        const response = await apiClient.getNews({
+          timespan: '24h',
+          maxRecords: 250,
+        })
+
+        if (cancelled) return
+
+        if (response.success && Array.isArray(response.data)) {
+          setArticles(response.data)
+          setLastUpdated(response.timestamp || new Date().toISOString())
+          clearError()
+        } else {
+          setError(response.warning || 'News feed returned no data')
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setError(
+            error instanceof Error ? error.message : 'Unable to reach the news service',
+          )
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    load()
+    const interval = setInterval(load, REFRESH_INTERVAL_MS)
+
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [setArticles, setLastUpdated, setLoading, setError, clearError])
+
+  /* Keep the right-hand panel list in sync with active filters */
+  useEffect(() => {
+    setVisibleArticles(filteredArticles)
+  }, [filteredArticles, setVisibleArticles])
+
+  /* ---------------------------------------------------------------- */
+  /* Auto rotation, paused while the user interacts                    */
+  /* ---------------------------------------------------------------- */
+
+  useEffect(() => {
+    if (!viewerRef.current) return
 
     const viewer = viewerRef.current
-
-    const startInteraction = () => {
-      isUserInteracting = true
+    const start = () => {
+      interactionRef.current = true
     }
-    const endInteraction = () => {
-      isUserInteracting = false
+    const end = () => {
+      interactionRef.current = false
     }
 
     const handler = viewer.screenSpaceEventHandler
-    handler.setInputAction(startInteraction, Cesium.ScreenSpaceEventType.LEFT_DOWN)
-    handler.setInputAction(startInteraction, Cesium.ScreenSpaceEventType.RIGHT_DOWN)
-    handler.setInputAction(startInteraction, Cesium.ScreenSpaceEventType.MIDDLE_DOWN)
-    handler.setInputAction(startInteraction, Cesium.ScreenSpaceEventType.WHEEL)
-    handler.setInputAction(endInteraction, Cesium.ScreenSpaceEventType.LEFT_UP)
-    handler.setInputAction(endInteraction, Cesium.ScreenSpaceEventType.RIGHT_UP)
-    handler.setInputAction(endInteraction, Cesium.ScreenSpaceEventType.MIDDLE_UP)
+    handler.setInputAction(start, Cesium.ScreenSpaceEventType.LEFT_DOWN)
+    handler.setInputAction(start, Cesium.ScreenSpaceEventType.RIGHT_DOWN)
+    handler.setInputAction(start, Cesium.ScreenSpaceEventType.MIDDLE_DOWN)
+    handler.setInputAction(start, Cesium.ScreenSpaceEventType.WHEEL)
+    handler.setInputAction(end, Cesium.ScreenSpaceEventType.LEFT_UP)
+    handler.setInputAction(end, Cesium.ScreenSpaceEventType.RIGHT_UP)
+    handler.setInputAction(end, Cesium.ScreenSpaceEventType.MIDDLE_UP)
 
     const rotate = () => {
-      if (!isUserInteracting) {
-        const camera = viewer.camera
-        camera.rotate(Cesium.Cartesian3.UNIT_Z, -GLOBE_CONFIG.AUTO_ROTATION.SPEED)
-      }
+      if (interactionRef.current || !rotationEnabledRef.current) return
+      viewer.camera.rotate(Cesium.Cartesian3.UNIT_Z, -GLOBE_CONFIG.AUTO_ROTATION.SPEED)
     }
 
     viewer.clock.onTick.addEventListener(rotate)
@@ -172,298 +278,252 @@ const GlobeView: React.FC<GlobeViewProps> = ({ className }) => {
     }
   }, [])
 
-  // Camera move handler - debounced viewport updates
+  /* ---------------------------------------------------------------- */
+  /* Scope tracking (zoom-based detail levels)                          */
+  /* ---------------------------------------------------------------- */
+
   useEffect(() => {
     if (!viewerRef.current) return
-
     const viewer = viewerRef.current
+    let timer: ReturnType<typeof setTimeout> | null = null
 
-    const handleCameraMove = () => {
-      if (viewportDebounce) clearTimeout(viewportDebounce)
+    const updateScope = () => {
+      const height = getCameraHeight(viewer.camera)
+      const level = getDetailLevel(height)
+      const position = getCameraPosition(viewer.camera)
 
-      viewportDebounce = setTimeout(() => {
-        const height = getCameraHeight(viewer.camera)
-        const level = getDetailLevel(height)
-        const bounds = getViewportBounds(viewer)
-        const position = getCameraPosition(viewer.camera)
-
-        setScope({
-          level,
-          center: { lat: position.latitude, lon: position.longitude },
-          bounds,
-          name: level.charAt(0).toUpperCase() + level.slice(1),
-          countryCode: null,
-        })
-
-        fetchNewsForViewport(bounds)
-      }, 300)
+      setScope({
+        level,
+        center: { lat: position.latitude, lon: position.longitude },
+        bounds: null,
+        name: level.charAt(0).toUpperCase() + level.slice(1),
+        countryCode: null,
+      })
     }
 
-    viewer.camera.moveStart.addEventListener(handleCameraMove)
-    viewer.camera.moveEnd.addEventListener(handleCameraMove)
-    viewer.camera.changed.addEventListener(handleCameraMove)
+    const onMove = () => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(updateScope, 250)
+    }
+
+    viewer.camera.moveEnd.addEventListener(onMove)
+    viewer.camera.changed.addEventListener(onMove)
 
     return () => {
-      viewer.camera.moveStart.removeEventListener(handleCameraMove)
-      viewer.camera.moveEnd.removeEventListener(handleCameraMove)
-      viewer.camera.changed.removeEventListener(handleCameraMove)
-      if (viewportDebounce) clearTimeout(viewportDebounce)
+      viewer.camera.moveEnd.removeEventListener(onMove)
+      viewer.camera.changed.removeEventListener(onMove)
+      if (timer) clearTimeout(timer)
     }
-  }, [])
+  }, [setScope])
 
-  // Fetch news for current viewport
-  const fetchNewsForViewport = useCallback(
-    async (bounds: { west: number; south: number; east: number; north: number }) => {
-      try {
-        const response = await apiClient.getRegionNews(bounds)
-        if (response.success && response.data) {
-          setVisibleArticles(response.data)
-          setArticles(response.data)
-        }
-      } catch (err) {
-        console.warn('Viewport news fetch failed:', err)
-      }
-    },
-    [setVisibleArticles, setArticles],
-  )
+  /* ---------------------------------------------------------------- */
+  /* Viewer API for the controls                                       */
+  /* ---------------------------------------------------------------- */
 
-  // Reset camera to global view
-  const resetCamera = useCallback(() => {
+  const resetCamera = React.useCallback(() => {
     if (!viewerRef.current) return
     viewerRef.current.camera.flyTo({
       destination: Cesium.Cartesian3.fromDegrees(0, 20, 25000000),
-      duration: 2.0,
+      duration: 2,
     })
   }, [])
 
-  // Fly to a location
-  const flyToLocation = useCallback(
-    (latitude: number, longitude: number, height: number = 2000000) => {
+  const flyToLocation = React.useCallback(
+    (latitude: number, longitude: number, height = 1800000) => {
       if (!viewerRef.current) return
       viewerRef.current.camera.flyTo({
         destination: Cesium.Cartesian3.fromDegrees(longitude, latitude, height),
-        duration: 2.0,
+        duration: 2,
       })
     },
     [],
   )
 
-  // Clear existing markers
-  const clearMarkers = useCallback(() => {
-    markersRef.current.forEach((marker) => {
-      viewerRef.current?.entities.remove(marker)
-    })
-    markersRef.current.clear()
-    clustersRef.current.forEach((cluster) => {
-      viewerRef.current?.entities.remove(cluster)
-    })
-    clustersRef.current.clear()
+  const toggleRotation = React.useCallback(() => {
+    rotationEnabledRef.current = !rotationEnabledRef.current
+    return rotationEnabledRef.current
   }, [])
 
-  // Render news markers on the globe
   useEffect(() => {
-    if (!viewerRef.current || !articles.length) return
+    registerViewer({ resetCamera, flyToLocation, toggleRotation })
+  }, [registerViewer, resetCamera, flyToLocation, toggleRotation])
+
+  /* ---------------------------------------------------------------- */
+  /* Markers                                                           */
+  /* ---------------------------------------------------------------- */
+
+  const clearMarkers = React.useCallback(() => {
+    const viewer = viewerRef.current
+    if (!viewer) return
+    markersRef.current.forEach((entity) => viewer.entities.remove(entity))
+    clustersRef.current.forEach((entity) => viewer.entities.remove(entity))
+    markersRef.current.clear()
+    clustersRef.current.clear()
+    clusterCentersRef.current.clear()
+  }, [])
+
+  useEffect(() => {
+    const viewer = viewerRef.current
+    if (!viewer) return
 
     clearMarkers()
 
-    const level = scope.level
-    const height = getCameraHeight(viewerRef.current.camera)
-    const shouldCluster = height > GLOBE_CONFIG.MARKER.CLUSTER_MIN_ZOOM
+    const list = filteredArticles.filter(
+      (article) => article.latitude !== null && article.longitude !== null,
+    )
 
-    if (shouldCluster && level === 'global') {
-      const clusterMap = new Map<
+    if (!list.length) return
+
+    const height = getCameraHeight(viewer.camera)
+    const clusterMode = height > GLOBE_CONFIG.MARKER.CLUSTER_MIN_ZOOM
+
+    if (clusterMode) {
+      const buckets = new Map<
         string,
-        { articles: NewsArticle[]; center: { lat: number; lon: number } }
+        { articles: NewsArticle[]; lat: number; lon: number }
       >()
 
-      articles.forEach((article) => {
-        if (article.latitude === null || article.longitude === null) return
-        const key = `${Math.round(article.latitude / 5)},${Math.round(article.longitude / 5)}`
-        if (!clusterMap.has(key)) {
-          clusterMap.set(key, {
-            articles: [],
-            center: { lat: article.latitude, lon: article.longitude },
+      for (const article of list) {
+        const key = `${Math.round(article.latitude! / 8)},${Math.round(article.longitude! / 8)}`
+        const bucket = buckets.get(key)
+        if (bucket) {
+          bucket.articles.push(article)
+          bucket.lat += (article.latitude! - bucket.lat) / bucket.articles.length
+          bucket.lon += (article.longitude! - bucket.lon) / bucket.articles.length
+        } else {
+          buckets.set(key, {
+            articles: [article],
+            lat: article.latitude!,
+            lon: article.longitude!,
           })
         }
-        const cluster = clusterMap.get(key)!
-        cluster.articles.push(article)
-        cluster.center.lat =
-          (cluster.center.lat * (cluster.articles.length - 1) + article.latitude) /
-          cluster.articles.length
-        cluster.center.lon =
-          (cluster.center.lon * (cluster.articles.length - 1) + article.longitude) /
-          cluster.articles.length
-      })
+      }
 
-      clusterMap.forEach((cluster, key) => {
-        const clusterEntity = viewerRef.current!.entities.add({
-          position: Cesium.Cartesian3.fromDegrees(
-            cluster.center.lon,
-            cluster.center.lat,
-            0,
-          ),
+      buckets.forEach((bucket, key) => {
+        const entity = viewer.entities.add({
+          id: `cluster:${key}`,
+          position: Cesium.Cartesian3.fromDegrees(bucket.lon, bucket.lat, 0),
           billboard: {
-            image: createClusterIcon(cluster.articles.length),
-            width: 32,
-            height: 32,
-          },
-          label: {
-            text: String(cluster.articles.length),
-            font: '12px sans-serif',
-            fillColor: Cesium.Color.WHITE,
-            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-            outlineWidth: 3,
-            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-            pixelOffset: new Cesium.Cartesian2(0, -20),
+            image: createClusterIcon(bucket.articles.length),
+            width: 46,
+            height: 46,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
         })
-        clustersRef.current.set(key, clusterEntity)
+        clusterCentersRef.current.set(`cluster:${key}`, {
+          lat: bucket.lat,
+          lon: bucket.lon,
+        })
+        clustersRef.current.set(key, entity)
       })
     } else {
-      articles.forEach((article) => {
-        if (article.latitude === null || article.longitude === null) return
-
+      for (const article of list) {
         const color =
           categoryMarkerColors[article.category] || categoryMarkerColors.politics
 
-        const entity = viewerRef.current!.entities.add({
+        const entity = viewer.entities.add({
           id: article.id,
           position: Cesium.Cartesian3.fromDegrees(
-            article.longitude,
-            article.latitude,
+            article.longitude!,
+            article.latitude!,
             0,
           ),
           billboard: {
-            image: createMarkerIcon(color, article.clusterId ? true : false),
-            width: 14,
-            height: 14,
+            image: createMarkerIcon(color, article.locationPrecision === 'country'),
+            width: article.locationPrecision === 'country' ? 11 : 16,
+            height: article.locationPrecision === 'country' ? 11 : 16,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
           label: {
             text:
-              article.title.length > 25
-                ? article.title.substring(0, 22) + '...'
+              article.title.length > 34
+                ? `${article.title.slice(0, 31)}...`
                 : article.title,
-            font: '11px sans-serif',
+            font: '11px "IBM Plex Sans", sans-serif',
             fillColor: Cesium.Color.WHITE,
-            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-            outlineWidth: 2,
+            showBackground: true,
+            backgroundColor: new Cesium.Color(0.02, 0.05, 0.08, 0.82),
+            backgroundPadding: new Cesium.Cartesian2(6, 4),
+            style: Cesium.LabelStyle.FILL,
             verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-            pixelOffset: new Cesium.Cartesian2(0, -16),
+            pixelOffset: new Cesium.Cartesian2(0, -14),
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
             show: false,
           },
           description: article.title,
         })
 
         markersRef.current.set(article.id, entity)
-      })
-    }
-
-    // Click handler to select markers
-    const handler = new Cesium.ScreenSpaceEventHandler(
-      viewerRef.current.canvas,
-    )
-    handler.setInputAction((click: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
-      const pickedObject = viewerRef.current!.scene.pick(click.position)
-      if (!pickedObject || !pickedObject.id) return
-
-      const entity = pickedObject.id
-      if (entity.id && markersRef.current.has(entity.id)) {
-        const article = articles.find((a) => a.id === entity.id)
-        if (article) {
-          // Fly to the marker
-          viewerRef.current!.camera.flyTo({
-            destination: Cesium.Cartesian3.fromDegrees(
-              article.longitude!,
-              article.latitude!,
-              1500000,
-            ),
-            duration: 2.0,
-          })
-          setSelectedArticle(article)
-        }
       }
-    }, Cesium.ScreenSpaceEventType.LEFT_CLICK)
-
-    // Cleanup handler on unmount
-    return () => {
-      handler.removeInputAction(Cesium.ScreenSpaceEventType.LEFT_CLICK)
     }
-  }, [articles, scope.level, clearMarkers, setSelectedArticle])
+  }, [filteredArticles, isReady, scope.level, clearMarkers])
 
-  // Create a colored marker icon as a data URL canvas
-  const createMarkerIcon = (color: string, isCluster: boolean): string => {
-    const canvas = document.createElement('canvas')
-    canvas.width = 40
-    canvas.height = 40
-    const ctx = canvas.getContext('2d')!
-    const center = 20
-    const radius = isCluster ? 12 : 7
+  /* ---------------------------------------------------------------- */
+  /* Click + hover interaction                                         */
+  /* ---------------------------------------------------------------- */
 
-    const gradient = ctx.createRadialGradient(
-      center,
-      center,
-      0,
-      center,
-      center,
-      radius * 2,
-    )
-    gradient.addColorStop(0, color + '80')
-    gradient.addColorStop(1, 'transparent')
-    ctx.fillStyle = gradient
-    ctx.beginPath()
-    ctx.arc(center, center, radius * 2, 0, Math.PI * 2)
-    ctx.fill()
-
-    ctx.fillStyle = color
-    ctx.beginPath()
-    ctx.arc(center, center, radius, 0, Math.PI * 2)
-    ctx.fill()
-
-    ctx.strokeStyle = 'rgba(255,255,255,0.9)'
-    ctx.lineWidth = 2
-    ctx.stroke()
-
-    return canvas.toDataURL()
-  }
-
-  const createClusterIcon = (count: number): string => {
-    const canvas = document.createElement('canvas')
-    canvas.width = 48
-    canvas.height = 48
-    const ctx = canvas.getContext('2d')!
-    const center = 24
-
-    ctx.fillStyle = '#40D9E840'
-    ctx.beginPath()
-    ctx.arc(center, center, 20, 0, Math.PI * 2)
-    ctx.fill()
-
-    ctx.fillStyle = '#40D9E8'
-    ctx.beginPath()
-    ctx.arc(center, center, 14, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.strokeStyle = '#ffffff'
-    ctx.lineWidth = 3
-    ctx.stroke()
-
-    ctx.fillStyle = '#021014'
-    ctx.font = 'bold 14px sans-serif'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillText(String(count), center, center + 2)
-
-    return canvas.toDataURL()
-  }
-
-  // Register viewer API with context
   useEffect(() => {
-    if (!viewerRef.current) return
-    const api = {
-      resetCamera,
-      flyToLocation,
+    const viewer = viewerRef.current
+    if (!viewer) return
+
+    const handler = new Cesium.ScreenSpaceEventHandler(viewer.canvas)
+
+    handler.setInputAction(
+      (click: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
+        const picked = viewer.scene.pick(click.position)
+        if (!picked || !picked.id) return
+        const entity = picked.id as Cesium.Entity
+        const id = String(entity.id)
+
+        if (id.startsWith('cluster:')) {
+          const center = clusterCentersRef.current.get(id)
+          if (center) {
+            viewer.camera.flyTo({
+              destination: Cesium.Cartesian3.fromDegrees(center.lon, center.lat, 2200000),
+              duration: 1.8,
+            })
+          }
+          return
+        }
+
+        const article = articlesRef.current.find((item) => item.id === id)
+        if (article && article.latitude !== null && article.longitude !== null) {
+          setSelectedArticle(article)
+          viewer.camera.flyTo({
+            destination: Cesium.Cartesian3.fromDegrees(
+              article.longitude,
+              article.latitude,
+              1400000,
+            ),
+            duration: 1.8,
+          })
+        }
+      },
+      Cesium.ScreenSpaceEventType.LEFT_CLICK,
+    )
+
+    handler.setInputAction(
+      (movement: Cesium.ScreenSpaceEventHandler.MotionEvent) => {
+        const picked = viewer.scene.pick(movement.endPosition)
+        const hoveredId = picked && picked.id ? String((picked.id as Cesium.Entity).id) : null
+
+        markersRef.current.forEach((entity, id) => {
+          if (!entity.label) return
+          entity.label.show = new Cesium.ConstantProperty(id === hoveredId)
+        })
+
+        viewer.canvas.style.cursor =
+          picked && picked.id && (hoveredId?.startsWith('cluster:') || markersRef.current.has(hoveredId || ''))
+            ? 'pointer'
+            : 'default'
+      },
+      Cesium.ScreenSpaceEventType.MOUSE_MOVE,
+    )
+
+    return () => {
+      handler.destroy()
     }
-    registerViewer(api)
-  }, [viewerRef.current, registerViewer, resetCamera, flyToLocation])
+  }, [isReady, setSelectedArticle])
 
   return (
     <div
@@ -479,9 +539,7 @@ const GlobeView: React.FC<GlobeViewProps> = ({ className }) => {
         background: '#05080D',
       }}
     >
-      {imageryWarning && (
-        <div className="imagery-warning">{imageryWarning}</div>
-      )}
+      {imageryWarning && <div className="imagery-warning">{imageryWarning}</div>}
       {!isReady && (
         <div className="globe-loading">
           <div className="loading-spinner"></div>
@@ -490,6 +548,71 @@ const GlobeView: React.FC<GlobeViewProps> = ({ className }) => {
       )}
     </div>
   )
+}
+
+/* ------------------------------------------------------------------ */
+/* Canvas icons                                                        */
+/* ------------------------------------------------------------------ */
+
+function createMarkerIcon(color: string, muted = false): string {
+  const canvas = document.createElement('canvas')
+  canvas.width = 40
+  canvas.height = 40
+  const ctx = canvas.getContext('2d')!
+  const center = 20
+  const radius = muted ? 5 : 7
+
+  const gradient = ctx.createRadialGradient(center, center, 0, center, center, radius * 3)
+  gradient.addColorStop(0, `${color}90`)
+  gradient.addColorStop(1, 'transparent')
+  ctx.fillStyle = gradient
+  ctx.beginPath()
+  ctx.arc(center, center, radius * 3, 0, Math.PI * 2)
+  ctx.fill()
+
+  ctx.fillStyle = color
+  ctx.beginPath()
+  ctx.arc(center, center, radius, 0, Math.PI * 2)
+  ctx.fill()
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.92)'
+  ctx.lineWidth = 2
+  ctx.stroke()
+
+  return canvas.toDataURL()
+}
+
+function createClusterIcon(count: number): string {
+  const canvas = document.createElement('canvas')
+  canvas.width = 56
+  canvas.height = 56
+  const ctx = canvas.getContext('2d')!
+  const center = 28
+
+  const glow = ctx.createRadialGradient(center, center, 0, center, center, 28)
+  glow.addColorStop(0, 'rgba(64,217,232,0.35)')
+  glow.addColorStop(1, 'transparent')
+  ctx.fillStyle = glow
+  ctx.beginPath()
+  ctx.arc(center, center, 28, 0, Math.PI * 2)
+  ctx.fill()
+
+  ctx.fillStyle = 'rgba(6,20,26,0.92)'
+  ctx.beginPath()
+  ctx.arc(center, center, 18, 0, Math.PI * 2)
+  ctx.fill()
+
+  ctx.strokeStyle = '#40D9E8'
+  ctx.lineWidth = 2.5
+  ctx.stroke()
+
+  ctx.fillStyle = '#CFFAFF'
+  ctx.font = 'bold 15px "IBM Plex Sans", sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(String(count), center, center + 1)
+
+  return canvas.toDataURL()
 }
 
 export default GlobeView

@@ -3,6 +3,7 @@ import { createContext, useContext, useRef, useCallback } from 'react'
 interface GlobeRef {
   resetCamera: () => void
   flyToLocation: (lat: number, lon: number, height?: number) => void
+  toggleRotation: () => boolean
 }
 
 interface GlobeContextValue extends GlobeRef {
@@ -35,8 +36,14 @@ export const GlobeProvider = ({ children }: { children: React.ReactNode }) => {
     [],
   )
 
+  const toggleRotation = useCallback(() => {
+    return viewerRef.current?.toggleRotation?.() ?? false
+  }, [])
+
   return (
-    <GlobeContext.Provider value={{ registerViewer, resetCamera, flyToLocation }}>
+    <GlobeContext.Provider
+      value={{ registerViewer, resetCamera, flyToLocation, toggleRotation }}
+    >
       {children}
     </GlobeContext.Provider>
   )

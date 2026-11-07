@@ -1,4 +1,4 @@
-const { fetchGdeltNews, normalizeArticle, deduplicateArticles, clusterEvents, corsHeaders } = require('../lib/news')
+const { fetchNews, corsHeaders } = require('../lib/news')
 
 module.exports = async function handler(req, res) {
   if (req.method === 'OPTIONS') {
@@ -10,7 +10,7 @@ module.exports = async function handler(req, res) {
   try {
     const query = req.query.q
     const timespan = req.query.timespan || '7d'
-    const maxRecords = parseInt(req.query.maxRecords || '100', 10)
+    const maxRecords = req.query.maxRecords || 200
 
     if (!query) {
       res.writeHead(400, { 'Content-Type': 'application/json', ...corsHeaders })
@@ -18,21 +18,16 @@ module.exports = async function handler(req, res) {
       return
     }
 
-    const rawArticles = await fetchGdeltNews(query, timespan, maxRecords)
-    const processed = []
-    for (const raw of rawArticles) {
-      const article = await normalizeArticle(raw, null)
-      if (article) processed.push(article)
-    }
-    const deduped = deduplicateArticles(processed)
-    const clustered = clusterEvents(deduped)
+    const result = await fetchNews({ query, timespan, maxRecords })
 
     res.writeHead(200, { 'Content-Type': 'application/json', ...corsHeaders })
     res.end(JSON.stringify({
       success: true,
-      cached: false,
-      count: clustered.length,
-      data: clustered,
+      cached: result.cached,
+      stale: result.stale,
+      count: result.articles.length,
+      total: result.total,
+      data: result.articles,
       timestamp: new Date().toISOString(),
     }))
   } catch (error) {

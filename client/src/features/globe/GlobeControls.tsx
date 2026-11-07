@@ -1,5 +1,5 @@
 import React from 'react'
-import { RotateCw } from 'lucide-react'
+import { RotateCw, Pause, Play } from 'lucide-react'
 import { useNewsStore } from '@/features/news/news.store'
 import { useGlobeRef } from '@/features/globe/globe.context'
 
@@ -8,8 +8,9 @@ interface GlobeControlsProps {
 }
 
 const GlobeControls: React.FC<GlobeControlsProps> = ({ className }) => {
-  const { resetCamera, flyToLocation } = useGlobeRef()
-  const { scope, setScope } = useNewsStore()
+  const { resetCamera, toggleRotation } = useGlobeRef()
+  const { scope, setScope, articles, isLoading } = useNewsStore()
+  const [rotating, setRotating] = React.useState(true)
 
   const handleReset = () => {
     resetCamera()
@@ -22,12 +23,16 @@ const GlobeControls: React.FC<GlobeControlsProps> = ({ className }) => {
     })
   }
 
+  const handleRotation = () => {
+    setRotating(toggleRotation())
+  }
+
   return (
     <div
       className={`globe-controls ${className || ''}`}
       style={{
         position: 'absolute',
-        bottom: 24,
+        bottom: 88,
         left: 24,
         zIndex: 50,
         display: 'flex',
@@ -47,24 +52,23 @@ const GlobeControls: React.FC<GlobeControlsProps> = ({ className }) => {
         </button>
         <button
           className="btn-glass"
-          title="Toggle auto-rotation"
-          onClick={() => {
-            // toggle handled via globe context; flyToLocation reserved for navigation
-            void flyToLocation
-          }}
+          title={rotating ? 'Pause auto-rotation' : 'Resume auto-rotation'}
+          onClick={handleRotation}
         >
-          <RotateCw size={16} />
+          {rotating ? <Pause size={16} /> : <Play size={16} />}
         </button>
       </div>
 
       <div className="glass-panel px-3 py-2 rounded text-xs border">
         <div className="flex items-center gap-1 mb-1">
           <div className="w-2 h-2 rounded-full bg-accent animate-pulse" />
-          <span className="text-accent">LIVE</span>
+          <span className="text-accent">{isLoading ? 'SYNCING' : 'LIVE'}</span>
         </div>
-        <div className="flex justify-between text-muted">
+        <div className="flex justify-between gap-4 text-muted">
           <span>{scope.level}</span>
-          <span>{scope.name}</span>
+          <span>
+            {articles.filter((article) => article.latitude !== null).length} mapped
+          </span>
         </div>
       </div>
     </div>

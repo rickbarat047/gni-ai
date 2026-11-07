@@ -1,5 +1,3 @@
-import { useEffect } from 'react'
-import { apiClient } from '@/services/api.client'
 import { GlobeProvider } from '@/features/globe/globe.context'
 import Header from '@/components/header/Header'
 import DiscoveryPanel from '@/components/panels/DiscoveryPanel'
@@ -10,37 +8,6 @@ import GlobeView from '@/features/globe/GlobeView'
 import GlobeControls from '@/features/globe/GlobeControls'
 
 function App() {
-  useEffect(() => {
-    let mounted = true
-
-    const init = async () => {
-      try {
-        const [statusRes, newsRes] = await Promise.allSettled([
-          apiClient.getStatus(),
-          apiClient.getNews({ timespan: '24h', maxRecords: 100 }),
-        ])
-
-        if (mounted && statusRes.status === 'fulfilled') {
-          // status handled in store via setStatus if needed
-        }
-
-        if (mounted && newsRes.status === 'fulfilled') {
-          const data = newsRes.value
-          if (data.success && data.data) {
-            // initial news loaded
-          }
-        }
-      } catch (err) {
-        console.warn('Initial load failed:', err)
-      }
-    }
-
-    init()
-    return () => {
-      mounted = false
-    }
-  }, [])
-
   return (
     <GlobeProvider>
       <div

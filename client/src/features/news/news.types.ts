@@ -82,10 +82,16 @@ export interface NewsStatus {
   success: boolean
   timestamp: string
   services: {
-    gdelt: { healthy: boolean; error: string | null; endpoint: string }
-    geocoding: { healthy: boolean; endpoint: string }
+    news: {
+      healthy: boolean
+      provider: string
+      configuredFeeds: number
+      respondingFeeds: number
+      failingFeeds: Array<{ id: string; error: string }>
+    }
+    geocoding: { healthy: boolean; provider: string }
   }
-  cache: { news: unknown; geocoding: unknown }
+  cache: { news: unknown }
   config: { defaultTimespan: string; maxArticles: number }
 }
 

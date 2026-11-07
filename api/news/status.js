@@ -1,4 +1,4 @@
-const { corsHeaders } = require('../lib/news')
+const { corsHeaders, getCacheStats, getSourceHealth } = require('../lib/news')
 
 module.exports = function handler(req, res) {
   if (req.method === 'OPTIONS') {
@@ -6,22 +6,33 @@ module.exports = function handler(req, res) {
     res.end()
     return
   }
+
+  const health = getSourceHealth()
+  const cacheStats = getCacheStats()
+
   res.writeHead(200, { 'Content-Type': 'application/json', ...corsHeaders })
   res.end(JSON.stringify({
     success: true,
     timestamp: new Date().toISOString(),
     services: {
-      gdelt: {
-        healthy: true,
-        error: null,
-        endpoint: 'https://api.gdeltproject.org/api/v2/doc/doc',
+      news: {
+        healthy: health.configured > 0,
+        provider: 'multi-source RSS',
+        configuredFeeds: health.configured,
+        respondingFeeds: health.responding,
+        failingFeeds: health.failing,
       },
       geocoding: {
         healthy: true,
-        endpoint: 'https://nominatim.openstreetmap.org/search',
+        provider: 'offline gazetteer + Nominatim',
       },
     },
-    cache: { news: { hits: 0, misses: 0 }, geocoding: { hits: 0, misses: 0 } },
-    config: { defaultTimespan: '24h', maxArticles: 100 },
+    cache: {
+      news: cacheStats,
+    },
+    config: {
+      defaultTimespan: '24h',
+      maxArticles: 250,
+    },
   }))
 }

@@ -1,7 +1,8 @@
 {
-  "functions": {
-    "api/news.js": {
-      "runtime": "edge@1.0.0"
-    }
-  }
+  "version": 2,
+  "outputDirectory": "client/dist",
+  "framework": "vite",
+  "routes": [
+    { "src": "/api/(.*)", "dest": "/api/$1" }
+  ]
 }

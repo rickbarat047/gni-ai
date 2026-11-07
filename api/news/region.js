@@ -1,4 +1,8 @@
-const { fetchGdeltNews, normalizeArticle, deduplicateArticles, clusterEvents, filterByViewport, filterByCategory, filterByTime, corsHeaders } = require('../lib/news')
+const {
+  fetchNews,
+  filterByViewport,
+  corsHeaders,
+} = require('../lib/news')
 
 module.exports = async function handler(req, res) {
   if (req.method === 'OPTIONS') {
@@ -12,39 +16,33 @@ module.exports = async function handler(req, res) {
     const south = parseFloat(req.query.south)
     const east = parseFloat(req.query.east)
     const north = parseFloat(req.query.north)
-    const timespan = req.query.timespan || '24h'
-    const maxRecords = parseInt(req.query.maxRecords || '10', 10)
-    const category = req.query.category
-    const timeRange = req.query.timeRange
 
     if (isNaN(west) || isNaN(south) || isNaN(east) || isNaN(north)) {
       res.writeHead(400, { 'Content-Type': 'application/json', ...corsHeaders })
-      res.end(JSON.stringify({ success: false, error: 'Missing bounding box parameters: west, south, east, north' }))
+      res.end(JSON.stringify({
+        success: false,
+        error: 'Missing bounding box parameters: west, south, east, north',
+      }))
       return
     }
 
-    const rawArticles = await fetchGdeltNews('(conflict OR politics OR economy OR disaster OR technology OR climate)', timespan, maxRecords)
+    const result = await fetchNews({
+      timespan: req.query.timespan || '7d',
+      maxRecords: req.query.maxRecords || 250,
+      category: req.query.category,
+      timeRange: req.query.timeRange,
+    })
 
-    const processed = []
-    let geoCount = 0
-    const MAX_GEO = 2
-    for (const raw of rawArticles) {
-      const article = await normalizeArticle(raw, null, geoCount < MAX_GEO)
-      if (article) processed.push(article)
-      if (article && article.latitude !== null) geoCount++
-    }
-
-    const deduped = deduplicateArticles(processed)
-    const clustered = clusterEvents(deduped)
-    const viewportFiltered = filterByViewport(clustered, { west, south, east, north })
-    const filtered = filterByTime(filterByCategory(viewportFiltered, category), timeRange)
-    const limited = filtered.slice(0, 100)
+    const inViewport = filterByViewport(result.articles, { west, south, east, north })
+    const limited = inViewport.slice(0, 250)
 
     res.writeHead(200, { 'Content-Type': 'application/json', ...corsHeaders })
     res.end(JSON.stringify({
       success: true,
-      cached: false,
+      cached: result.cached,
+      stale: result.stale,
       count: limited.length,
+      total: inViewport.length,
       data: limited,
       timestamp: new Date().toISOString(),
     }))
