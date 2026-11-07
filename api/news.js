@@ -20,7 +20,7 @@ module.exports = async function handler(req, res) {
 
     const processed = []
     let geoCount = 0
-    const MAX_GEO = 2
+    const MAX_GEO = 0
     for (const raw of rawArticles) {
       const article = await normalizeArticle(raw, null, geoCount < MAX_GEO)
       if (article) processed.push(article)
