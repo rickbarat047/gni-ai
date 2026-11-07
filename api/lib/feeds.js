@@ -86,14 +86,15 @@ function unwrapCdata(value) {
 
 function stripHtml(value) {
   if (!value) return ''
+  const decoded = decodeEntities(unwrapCdata(value))
   return decodeEntities(
-    unwrapCdata(value)
+    decoded
       .replace(/<script[\s\S]*?<\/script>/gi, ' ')
       .replace(/<style[\s\S]*?<\/style>/gi, ' ')
       .replace(/<[^>]*>/g, ' ')
       .replace(/\s+/g, ' ')
       .trim(),
-  )
+  ).trim()
 }
 
 function tagContent(xml, names) {

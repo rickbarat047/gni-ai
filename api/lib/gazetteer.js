@@ -97,6 +97,8 @@ city('Paramaribo', 'sr', 'Suriname', 5.852, -55.2038)
 /* ------------------------------------------------------------------ */
 
 city('London', 'gb', 'United Kingdom', 51.5074, -0.1278, ['Westminster', 'Downing Street'])
+city('Oxford', 'gb', 'United Kingdom', 51.752, -1.2577)
+city('Cambridge', 'gb', 'United Kingdom', 52.2053, 0.1218)
 city('Manchester', 'gb', 'United Kingdom', 53.4808, -2.2426)
 city('Birmingham', 'gb', 'United Kingdom', 52.4862, -1.8904)
 city('Glasgow', 'gb', 'United Kingdom', 55.8642, -4.2518)
@@ -639,22 +641,88 @@ function findMatches(text) {
 
 /**
  * Extract the most likely event location from a headline and summary.
- * City mentions win over country mentions because they describe where an
- * event happened, not merely which country is involved.
+ *
+ * Order of trust:
+ *  1. A city named in the headline.
+ *  2. A city named in the summary that sits inside a country named in the
+ *     headline (this refines "Iraq" to "Baghdad" without guessing).
+ *  3. The most-mentioned country in the headline.
+ *  4. A city named in the summary.
+ *  5. The most-mentioned country in the summary.
  */
 function extractLocation(title, summary) {
   const titleMatches = findMatches(title || '')
-  const pool = titleMatches.length
-    ? titleMatches
-    : findMatches((summary || '').slice(0, 600))
+  const summaryMatches = findMatches((summary || '').slice(0, 600))
 
-  if (!pool.length) return null
+  const cityFromTitle = titleMatches.find((match) => match.entry.type === 'city')
+  if (cityFromTitle) return toResult(cityFromTitle.entry)
 
-  const cityMatch = pool.find((m) => m.entry.type === 'city')
-  const countryMatch = pool.find((m) => m.entry.type === 'country')
-  const chosen = cityMatch || countryMatch || pool[0]
-  const entry = chosen.entry
+  const titleCountries = new Set(
+    titleMatches
+      .filter((match) => match.entry.type === 'country')
+      .map((match) => match.entry.name),
+  )
 
+  if (titleCountries.size > 0) {
+    const refine = summaryMatches.find(
+      (match) =>
+        match.entry.type === 'city' && titleCountries.has(match.entry.country),
+    )
+    if (refine) return toResult(refine.entry)
+
+    const best = pickCountry(titleMatches, summaryMatches)
+    if (best) return toResult(best)
+  }
+
+  const cityFromSummary = summaryMatches.find((match) => match.entry.type === 'city')
+  if (cityFromSummary) return toResult(cityFromSummary.entry)
+
+  if (summaryMatches.length) {
+    const best = pickCountry(summaryMatches, [])
+    if (best) return toResult(best)
+  }
+
+  if (titleMatches.length) return toResult(titleMatches[0].entry)
+
+  return null
+}
+
+function pickCountry(primaryMatches, secondaryMatches) {
+  const scores = new Map()
+
+  for (const match of primaryMatches) {
+    if (match.entry.type !== 'country') continue
+    const current = scores.get(match.entry.name) || { entry: match.entry, score: 0, index: match.index }
+    current.score += 3
+    if (match.index < current.index) current.index = match.index
+    scores.set(match.entry.name, current)
+  }
+
+  for (const match of secondaryMatches) {
+    if (match.entry.type !== 'country') continue
+    const current = scores.get(match.entry.name) || {
+      entry: match.entry,
+      score: 0,
+      index: Number.MAX_SAFE_INTEGER,
+    }
+    current.score += 1
+    scores.set(match.entry.name, current)
+  }
+
+  let best = null
+  for (const candidate of scores.values()) {
+    if (!best) {
+      best = candidate
+      continue
+    }
+    if (candidate.score > best.score) best = candidate
+    else if (candidate.score === best.score && candidate.index < best.index) best = candidate
+  }
+
+  return best ? best.entry : null
+}
+
+function toResult(entry) {
   if (entry.type === 'city') {
     return {
       latitude: entry.lat,

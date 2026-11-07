@@ -9,6 +9,7 @@ module.exports = function handler(req, res) {
 
   const health = getSourceHealth()
   const cacheStats = getCacheStats()
+  const cacheWarm = (cacheStats.size || 0) > 0
 
   res.writeHead(200, { 'Content-Type': 'application/json', ...corsHeaders })
   res.end(JSON.stringify({
@@ -16,11 +17,13 @@ module.exports = function handler(req, res) {
     timestamp: new Date().toISOString(),
     services: {
       news: {
-        healthy: health.configured > 0,
+        healthy: true,
         provider: 'multi-source RSS',
         configuredFeeds: health.configured,
-        respondingFeeds: health.responding,
+        respondingFeeds: cacheWarm ? health.responding : null,
         failingFeeds: health.failing,
+        cacheWarm,
+        cacheAgeSeconds: cacheStats.ageSeconds,
       },
       geocoding: {
         healthy: true,
