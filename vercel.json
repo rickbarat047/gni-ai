@@ -3,7 +3,6 @@
   "outputDirectory": "client/dist",
   "framework": "vite",
   "routes": [
-    { "src": "/api/(.*)", "dest": "/api/$1" },
-    { "src": "/(.*)", "dest": "/client/dist/index.html", "status": 200 }
+    { "src": "/api/(.*)", "dest": "/api/$1" }
   ]
 }
