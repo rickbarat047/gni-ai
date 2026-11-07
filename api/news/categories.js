@@ -1,11 +1,7 @@
-import { VercelRequest, VercelResponse } from '@vercel/node'
-import { CATEGORY_CONFIG, json, corsHeaders } from '../lib/news'
+const { CATEGORY_CONFIG, corsHeaders } = require('../lib/news')
 
-export default function handler(
-  _req: VercelRequest,
-  res: VercelResponse,
-): void {
-  if (_req.method === 'OPTIONS') {
+module.exports = function handler(req, res) {
+  if (req.method === 'OPTIONS') {
     res.writeHead(204, corsHeaders)
     res.end()
     return

@@ -1,64 +1,9 @@
 /**
  * Shared helpers for Vercel serverless API functions.
- * Self-contained so each function is stateless (serverless-safe).
+ * Plain JavaScript to avoid TypeScript module resolution issues.
  */
 
-import axios, { AxiosInstance } from 'axios'
-
-export interface RawGdeltArticle {
-  url: string
-  title: string
-  seendate: string
-  socialimage?: string | null
-  domain: string
-  language: string
-  sourcecountry: string
-  themes?: string[]
-  locations?: string[]
-  image?: string | null
-  [key: string]: unknown
-}
-
-export interface InternalArticle {
-  id: string
-  title: string
-  summary: string
-  url: string
-  source: string
-  sourceCountry: string
-  publishedAt: string
-  eventLocation: string
-  country: string
-  region: string
-  city: string
-  latitude: number | null
-  longitude: number | null
-  locationPrecision: 'city' | 'region' | 'country' | 'unknown'
-  locationConfidence: number
-  category: string
-  imageUrl: string | null
-  clusterId: string | null
-  relatedSources: string[]
-}
-
-export interface CategoryInfo {
-  id: string
-  label: string
-  color: string
-}
-
-export const CATEGORY_CONFIG: Record<string, CategoryInfo> = {
-  politics: { id: 'politics', label: 'Politics', color: '#438BFF' },
-  conflict: { id: 'conflict', label: 'Conflict / Security', color: '#FF4D4D' },
-  business: { id: 'business', label: 'Business / Economy', color: '#4CAF50' },
-  technology: { id: 'technology', label: 'Technology', color: '#40D9E8' },
-  science: { id: 'science', label: 'Science', color: '#8B5CF6' },
-  climate: { id: 'climate', label: 'Climate / Environment', color: '#14B8A6' },
-  disaster: { id: 'disaster', label: 'Disasters', color: '#FB923C' },
-  sports: { id: 'sports', label: 'Sports', color: '#EAB308' },
-  culture: { id: 'culture', label: 'Culture', color: '#EC4899' },
-  health: { id: 'health', label: 'Health', color: '#6366F1' },
-}
+const axios = require('axios')
 
 const GDALT_DOC_API = 'https://api.gdeltproject.org/api/v2/doc/doc'
 const GEOCODING_BASE = 'https://nominatim.openstreetmap.org/search'
@@ -66,10 +11,9 @@ const GEOCODING_BASE = 'https://nominatim.openstreetmap.org/search'
 let lastGdeltRequest = 0
 let lastGeoRequest = 0
 
-const sleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms))
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
-const waitForGdelt = async (): Promise<void> => {
+const waitForGdelt = async () => {
   const now = Date.now()
   const elapsed = now - lastGdeltRequest
   if (elapsed < 1000) {
@@ -78,7 +22,7 @@ const waitForGdelt = async (): Promise<void> => {
   lastGdeltRequest = Date.now()
 }
 
-const waitForGeo = async (): Promise<void> => {
+const waitForGeo = async () => {
   const now = Date.now()
   const elapsed = now - lastGeoRequest
   if (elapsed < 1100) {
@@ -87,14 +31,14 @@ const waitForGeo = async (): Promise<void> => {
   lastGeoRequest = Date.now()
 }
 
-const gdeltClient: AxiosInstance = axios.create({
+const gdeltClient = axios.create({
   timeout: 30000,
   headers: {
     'User-Agent': 'WORLDVIEW/1.0 (global-news-intelligence; contact@worldview.app)',
   },
 })
 
-const geoClient: AxiosInstance = axios.create({
+const geoClient = axios.create({
   timeout: 20000,
   headers: {
     'User-Agent': 'WORLDVIEW/1.0 (https://worldview.app; contact@worldview.app)',
@@ -103,7 +47,7 @@ const geoClient: AxiosInstance = axios.create({
   },
 })
 
-export const hashString = (str: string): string => {
+function hashString(str) {
   let hash = 0
   for (let i = 0; i < str.length; i++) {
     const char = str.charCodeAt(i)
@@ -113,12 +57,9 @@ export const hashString = (str: string): string => {
   return Math.abs(hash).toString(36)
 }
 
-export const classifyCategory = (
-  title: string,
-  themes?: string[],
-): string => {
+function classifyCategory(title, themes) {
   const text = `${title} ${(themes || []).join(' ')}`.toLowerCase()
-  const keywords: Record<string, string[]> = {
+  const keywords = {
     politics: ['politic', 'government', 'election', 'congress', 'parliament', 'president', 'minister', 'policy', 'senate', 'campaign'],
     conflict: ['war', 'conflict', 'attack', 'military', 'strike', 'invasion', 'bombing', 'troop', 'army', 'missile', 'combat'],
     business: ['economy', 'economic', 'business', 'market', 'stock', 'trade', 'finance', 'investment', 'gdp', 'inflation', 'company', 'corporate'],
@@ -131,7 +72,7 @@ export const classifyCategory = (
     health: ['health', 'medical', 'hospital', 'disease', 'virus', 'pandemic', 'vaccine', 'doctor', 'medicine', 'healthcare'],
   }
 
-  const scores: Record<string, number> = {}
+  const scores = {}
   for (const cat of Object.keys(keywords)) {
     scores[cat] = 0
     for (const kw of keywords[cat]) {
@@ -150,7 +91,7 @@ export const classifyCategory = (
   return best
 }
 
-export const parseGdeltDate = (dateStr?: string): string | null => {
+function parseGdeltDate(dateStr) {
   if (!dateStr) return null
   try {
     const d = new Date(dateStr)
@@ -161,47 +102,41 @@ export const parseGdeltDate = (dateStr?: string): string | null => {
   }
 }
 
-export const fetchGdeltNews = async (
-  query: string,
-  timespan: string = '24h',
-  maxRecords: number = 100,
-  retries: number = 3,
-): Promise<RawGdeltArticle[]> => {
-  let lastError: unknown = null
+async function fetchGdeltNews(query, timespan, maxRecords, retries) {
+  timespan = timespan || '24h'
+  maxRecords = maxRecords || 100
+  retries = retries || 3
+  let lastError = null
   for (let attempt = 0; attempt <= retries; attempt++) {
     await waitForGdelt()
     try {
-      const response = await gdeltClient.get<{ articles: RawGdeltArticle[] }>(
-        GDALT_DOC_API,
-        {
-          params: {
-            query,
-            mode: 'artlist',
-            format: 'json',
-            maxrecords: Math.min(maxRecords, 250),
-            timespan,
-            sort: 'datelisted',
-            overlap: 'off',
-            image: 1,
-            ssl: 1,
-          },
+      const response = await gdeltClient.get(GDALT_DOC_API, {
+        params: {
+          query,
+          mode: 'artlist',
+          format: 'json',
+          maxrecords: Math.min(maxRecords, 250),
+          timespan,
+          sort: 'datelisted',
+          overlap: 'off',
+          image: 1,
+          ssl: 1,
         },
-      )
+      })
       return response.data?.articles || []
-    } catch (error: unknown) {
+    } catch (error) {
       lastError = error
-      const axiosError = error as { response?: { status?: number; headers?: Record<string, string> }; message?: string }
       if (axios.isAxiosError(error)) {
-        const status = axiosError.response?.status
+        const status = error.response?.status
         if ((status === 429 || (status && status >= 500)) && attempt < retries) {
-          const retryAfter = axiosError.response?.headers?.['retry-after']
+          const retryAfter = error.response?.headers?.['retry-after']
           const waitMs = retryAfter
             ? parseInt(String(retryAfter), 10) * 1000
             : Math.pow(2, attempt) * 1000
           await sleep(waitMs)
           continue
         }
-        throw new Error(`GDELT API error: ${status || axiosError.message || 'Unknown'}`)
+        throw new Error(`GDELT API error: ${status || error.message}`)
       }
       throw new Error('GDELT API request failed')
     }
@@ -211,21 +146,9 @@ export const fetchGdeltNews = async (
   )
 }
 
-export const geocodeLocation = async (
-  query: string,
-  retries: number = 2,
-): Promise<{
-  latitude: number
-  longitude: number
-  displayName: string
-  country: string | null
-  countryCode: string | null
-  region: string | null
-  city: string | null
-  precision: 'city' | 'region' | 'country' | 'unknown'
-  confidence: number
-} | null> => {
-  let lastError: unknown = null
+async function geocodeLocation(query, retries) {
+  retries = retries || 2
+  let lastError = null
   for (let attempt = 0; attempt <= retries; attempt++) {
     await waitForGeo()
     try {
@@ -236,22 +159,12 @@ export const geocodeLocation = async (
       if (!results || results.length === 0) return null
       const best = results[0]
       const address = best.address || {}
-      const city =
-        address.city ||
-        address.town ||
-        address.village ||
-        address.municipality ||
-        null
-      const region =
-        address.state ||
-        address.region ||
-        address.province ||
-        address.state_district ||
-        null
+      const city = address.city || address.town || address.village || address.municipality || null
+      const region = address.state || address.region || address.province || address.state_district || null
       const country = address.country || null
       const countryCode = address.country_code || null
 
-      let precision: 'city' | 'region' | 'country' | 'unknown' = 'unknown'
+      let precision = 'unknown'
       if (city) precision = 'city'
       else if (region) precision = 'region'
       else if (country) precision = 'country'
@@ -273,7 +186,7 @@ export const geocodeLocation = async (
         precision,
         confidence,
       }
-    } catch (error: unknown) {
+    } catch (error) {
       lastError = error
       if (attempt < retries) await sleep(1000 * (attempt + 1))
     }
@@ -281,7 +194,7 @@ export const geocodeLocation = async (
   return null
 }
 
-export const calculateSimilarity = (a: string, b: string): number => {
+function calculateSimilarity(a, b) {
   const setA = new Set(a.toLowerCase().split(/\s+/))
   const setB = new Set(b.toLowerCase().split(/\s+/))
   const intersection = [...setA].filter((w) => setB.has(w))
@@ -289,14 +202,11 @@ export const calculateSimilarity = (a: string, b: string): number => {
   return union.size === 0 ? 0 : intersection.length / union.size
 }
 
-export const deduplicateArticles = (
-  articles: InternalArticle[],
-): InternalArticle[] => {
-  const unique: InternalArticle[] = []
-  const seenTitles: string[] = []
+function deduplicateArticles(articles) {
+  const unique = []
+  const seenTitles = []
   const sorted = [...articles].sort(
-    (a, b) =>
-      new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime(),
+    (a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime(),
   )
   for (const article of sorted) {
     if (seenTitles.some((t) => calculateSimilarity(article.title, t) > 0.85)) {
@@ -308,11 +218,11 @@ export const deduplicateArticles = (
   return unique
 }
 
-export const clusterEvents = (articles: InternalArticle[]): InternalArticle[] => {
+function clusterEvents(articles) {
   if (!articles.length) return articles
   const clustered = [...articles]
   let counter = 0
-  const used = new Set<number>()
+  const used = new Set()
   for (let i = 0; i < clustered.length; i++) {
     if (used.has(i)) continue
     const clusterId = `cluster-${counter++}`
@@ -327,7 +237,7 @@ export const clusterEvents = (articles: InternalArticle[]): InternalArticle[] =>
         (a.latitude !== null &&
           b.latitude !== null &&
           Math.abs(a.latitude - b.latitude) < 0.5 &&
-          Math.abs(a.longitude! - b.longitude!) < 0.5)
+          Math.abs(a.longitude - b.longitude) < 0.5)
       const sameDay =
         new Date(a.publishedAt).toDateString() ===
         new Date(b.publishedAt).toDateString()
@@ -341,10 +251,7 @@ export const clusterEvents = (articles: InternalArticle[]): InternalArticle[] =>
   return clustered
 }
 
-export const filterByViewport = (
-  articles: InternalArticle[],
-  bounds: { west: number; south: number; east: number; north: number },
-): InternalArticle[] => {
+function filterByViewport(articles, bounds) {
   return articles.filter((a) => {
     if (a.latitude === null || a.longitude === null) return false
     if (bounds.west > bounds.east) {
@@ -363,18 +270,12 @@ export const filterByViewport = (
   })
 }
 
-export const filterByCategory = (
-  articles: InternalArticle[],
-  category: string | null,
-): InternalArticle[] => {
+function filterByCategory(articles, category) {
   if (!category || category === 'all') return articles
   return articles.filter((a) => a.category === category)
 }
 
-export const filterByTime = (
-  articles: InternalArticle[],
-  timeRange: string | null,
-): InternalArticle[] => {
+function filterByTime(articles, timeRange) {
   if (!timeRange) return articles
   const now = Date.now()
   let ms = 24 * 60 * 60 * 1000
@@ -389,10 +290,7 @@ export const filterByTime = (
   return articles.filter((a) => new Date(a.publishedAt).getTime() >= cutoff)
 }
 
-export const normalizeArticle = async (
-  raw: RawGdeltArticle,
-  geo: any | null,
-): Promise<InternalArticle | null> => {
+async function normalizeArticle(raw, geo) {
   if (!raw.title || !raw.url) return null
   const geoResult = await geocodeLocation(
     raw.locations && raw.locations.length > 0
@@ -409,7 +307,7 @@ export const normalizeArticle = async (
     source: raw.domain || 'Unknown',
     sourceCountry: raw.sourcecountry || 'Unknown',
     publishedAt: parseGdeltDate(raw.seendate) || new Date().toISOString(),
-    eventLocation: geoResult?.displayName || (raw.eventLocation as string) || '',
+    eventLocation: geoResult?.displayName || '',
     country: geoResult?.country || '',
     region: geoResult?.region || '',
     city: geoResult?.city || '',
@@ -424,14 +322,34 @@ export const normalizeArticle = async (
   }
 }
 
-export const corsHeaders = {
+const CATEGORY_CONFIG = {
+  politics: { id: 'politics', label: 'Politics', color: '#438BFF' },
+  conflict: { id: 'conflict', label: 'Conflict / Security', color: '#FF4D4D' },
+  business: { id: 'business', label: 'Business / Economy', color: '#4CAF50' },
+  technology: { id: 'technology', label: 'Technology', color: '#40D9E8' },
+  science: { id: 'science', label: 'Science', color: '#8B5CF6' },
+  climate: { id: 'climate', label: 'Climate / Environment', color: '#14B8A6' },
+  disaster: { id: 'disaster', label: 'Disasters', color: '#FB923C' },
+  sports: { id: 'sports', label: 'Sports', color: '#EAB308' },
+  culture: { id: 'culture', label: 'Culture', color: '#EC4899' },
+  health: { id: 'health', label: 'Health', color: '#6366F1' },
+}
+
+const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 }
 
-export const json = (data: unknown, status = 200) => ({
-  status,
-  headers: { 'Content-Type': 'application/json', ...corsHeaders },
-  body: JSON.stringify(data),
-})
+module.exports = {
+  fetchGdeltNews,
+  normalizeArticle,
+  deduplicateArticles,
+  clusterEvents,
+  filterByViewport,
+  filterByCategory,
+  filterByTime,
+  geocodeLocation,
+  CATEGORY_CONFIG,
+  corsHeaders,
+}
