@@ -125,10 +125,16 @@ const GlobeView: React.FC<GlobeViewProps> = ({ className }) => {
       })
 
       viewerRef.current = viewer
+      ;(window as unknown as { __globeViewer?: Cesium.Viewer }).__globeViewer = viewer
 
       const { longitude, latitude, height } = GLOBE_CONFIG.CAMERA.DEFAULT_POSITION
       viewer.camera.setView({
         destination: Cesium.Cartesian3.fromDegrees(longitude, latitude, height),
+        orientation: {
+          heading: 0,
+          pitch: -Cesium.Math.PI_OVER_TWO,
+          roll: 0,
+        },
       })
 
       viewer.imageryLayers.removeAll()
@@ -190,6 +196,7 @@ const GlobeView: React.FC<GlobeViewProps> = ({ className }) => {
         viewer.destroy()
       }
       viewerRef.current = null
+      ;(window as unknown as { __globeViewer?: Cesium.Viewer }).__globeViewer = undefined
     }
   }, [clearError, setError])
 

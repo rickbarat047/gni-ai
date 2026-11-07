@@ -66,6 +66,10 @@ const DiscoveryPanel: React.FC<DiscoveryPanelProps> = ({ className }) => {
         flexDirection: 'column',
         transition: 'width 0.3s ease',
         overflow: 'hidden',
+        background:
+          'linear-gradient(180deg, rgba(7, 12, 19, 0.94) 0%, rgba(5, 8, 13, 0.97) 100%)',
+        backdropFilter: 'blur(18px)',
+        borderRight: '1px solid rgba(120, 160, 190, 0.16)',
       }}
     >
       <button
