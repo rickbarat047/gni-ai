@@ -32,7 +32,7 @@ const waitForGeo = async () => {
 }
 
 const gdeltClient = axios.create({
-  timeout: 30000,
+  timeout: 5000,
   headers: {
     'User-Agent': 'WORLDVIEW/1.0 (global-news-intelligence; contact@worldview.app)',
   },
@@ -104,8 +104,8 @@ function parseGdeltDate(dateStr) {
 
 async function fetchGdeltNews(query, timespan, maxRecords, retries) {
   timespan = timespan || '24h'
-  maxRecords = maxRecords || 100
-  retries = retries || 3
+  maxRecords = maxRecords || 10
+  retries = retries || 0
   let lastError = null
   for (let attempt = 0; attempt <= retries; attempt++) {
     await waitForGdelt()
@@ -128,12 +128,12 @@ async function fetchGdeltNews(query, timespan, maxRecords, retries) {
       lastError = error
       if (axios.isAxiosError(error)) {
         const status = error.response?.status
-        if ((status === 429 || (status && status >= 500)) && attempt < retries) {
-          const retryAfter = error.response?.headers?.['retry-after']
-          const waitMs = retryAfter
-            ? parseInt(String(retryAfter), 10) * 1000
-            : Math.pow(2, attempt) * 1000
-          await sleep(waitMs)
+        // Don't retry on 429 - Vercel has 10s timeout
+        if (status === 429) {
+          throw new Error(`GDELT API error: 429 (rate limited)`)
+        }
+        if (status && status >= 500 && attempt < retries) {
+          await sleep(Math.pow(2, attempt) * 1000)
           continue
         }
         throw new Error(`GDELT API error: ${status || error.message}`)
