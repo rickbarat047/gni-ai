@@ -138,16 +138,35 @@ const GlobeView: React.FC<GlobeViewProps> = ({ className }) => {
       })
 
       viewer.imageryLayers.removeAll()
-      viewer.imageryLayers.addImageryProvider(
-        new Cesium.UrlTemplateImageryProvider({
-          url: GLOBE_CONFIG.IMAGERY_PROVIDERS.OPEN_STREET_MAP.url,
-          credit: new Cesium.Credit(
-            GLOBE_CONFIG.IMAGERY_PROVIDERS.OPEN_STREET_MAP.attribution,
-          ),
-          maximumLevel: 18,
-        }),
-      )
+      try {
+        const satelliteLayer = viewer.imageryLayers.addImageryProvider(
+          new Cesium.UrlTemplateImageryProvider({
+            url: GLOBE_CONFIG.IMAGERY_PROVIDERS.ESRI_WORLD.tileUrl,
+            credit: new Cesium.Credit(
+              GLOBE_CONFIG.IMAGERY_PROVIDERS.ESRI_WORLD.attribution,
+            ),
+            maximumLevel: 18,
+          }),
+        )
+        // Cinematic grade: darker, slightly contrasty satellite imagery so the
+        // cyan telemetry layer always reads clearly.
+        satelliteLayer.brightness = 0.58
+        satelliteLayer.contrast = 1.18
+        satelliteLayer.saturation = 0.72
+        satelliteLayer.gamma = 1.05
+      } catch {
+        viewer.imageryLayers.addImageryProvider(
+          new Cesium.UrlTemplateImageryProvider({
+            url: GLOBE_CONFIG.IMAGERY_PROVIDERS.OPEN_STREET_MAP.url,
+            credit: new Cesium.Credit(
+              GLOBE_CONFIG.IMAGERY_PROVIDERS.OPEN_STREET_MAP.attribution,
+            ),
+            maximumLevel: 18,
+          }),
+        )
+      }
 
+      viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString('#04070b')
       viewer.scene.globe.enableLighting = false
       viewer.scene.globe.depthTestAgainstTerrain = false
       viewer.scene.globe.showGroundAtmosphere = true
