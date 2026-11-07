@@ -190,17 +190,18 @@ export const fetchGdeltNews = async (
       return response.data?.articles || []
     } catch (error: unknown) {
       lastError = error
+      const axiosError = error as { response?: { status?: number; headers?: Record<string, string> }; message?: string }
       if (axios.isAxiosError(error)) {
-        const status = error.response?.status
+        const status = axiosError.response?.status
         if ((status === 429 || (status && status >= 500)) && attempt < retries) {
-          const retryAfter = error.response?.headers?.['retry-after']
+          const retryAfter = axiosError.response?.headers?.['retry-after']
           const waitMs = retryAfter
             ? parseInt(String(retryAfter), 10) * 1000
             : Math.pow(2, attempt) * 1000
           await sleep(waitMs)
           continue
         }
-        throw new Error(`GDELT API error: ${status || error.message}`)
+        throw new Error(`GDELT API error: ${status || axiosError.message || 'Unknown'}`)
       }
       throw new Error('GDELT API request failed')
     }
@@ -408,7 +409,7 @@ export const normalizeArticle = async (
     source: raw.domain || 'Unknown',
     sourceCountry: raw.sourcecountry || 'Unknown',
     publishedAt: parseGdeltDate(raw.seendate) || new Date().toISOString(),
-    eventLocation: geoResult?.displayName || raw.eventLocation || '',
+    eventLocation: geoResult?.displayName || (raw.eventLocation as string) || '',
     country: geoResult?.country || '',
     region: geoResult?.region || '',
     city: geoResult?.city || '',
